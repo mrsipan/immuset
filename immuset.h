@@ -12,7 +12,7 @@ typedef enum {
     SET_NODE_COLLISION
 } SetNodeType;
 
-/* Forward declarations */
+/* Forward declarations of structs */
 typedef struct _SetNode SetNode;
 typedef struct _SetBitmapNode SetBitmapNode;
 typedef struct _SetArrayNode SetArrayNode;
@@ -20,7 +20,7 @@ typedef struct _SetCollisionNode SetCollisionNode;
 typedef struct _ImmuSet ImmuSet;
 typedef struct _ImmuSetMutation ImmuSetMutation;
 
-/* Node structures (same as before) */
+/* Full structure definitions */
 struct _SetNode {
     PyObject_HEAD
     SetNodeType type;
@@ -69,14 +69,15 @@ extern PyTypeObject _SetBitmapNode_Type;
 extern PyTypeObject _SetArrayNode_Type;
 extern PyTypeObject _SetCollisionNode_Type;
 
-/* --- Function prototypes (from hamt_set.c) --- */
+/* --- Core HAMT functions (from hamt_set.c) --- */
 SetNode* _set_node_assoc(SetNode *node, uint32_t hash, PyObject *key,
                          int *added, int shift);
 SetNode* _set_node_without(SetNode *node, uint32_t hash, PyObject *key,
                            int *removed, int shift);
 int _set_node_find(SetNode *node, uint32_t hash, PyObject *key, int shift);
 void _set_node_dealloc(SetNode *node);
-int _hamt_set_init_types(void);   /* new: initialize node types */
+int _hamt_set_init_types(void);
+int _set_node_collect_keys(SetNode *node, PyObject *list, int shift);
 
 /* --- ImmuSet and ImmuSetMutation type objects (defined in immuset.c) --- */
 extern PyTypeObject ImmuSet_Type;

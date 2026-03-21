@@ -120,21 +120,17 @@ static Py_hash_t immuset_hash(ImmuSet *self) {
     return self->hash;
 }
 
+#include "immuset.h"
+
+
 static PyObject* immuset_iter(PyObject *self) {
-    /* Simple iterator: collect keys into a list (inefficient but works) */
+    ImmuSet *set = (ImmuSet*)self;
     PyObject *keys = PyList_New(0);
     if (!keys) return NULL;
-    PyObject *iter = PyObject_GetIter((PyObject*)self);
-    if (!iter) { Py_DECREF(keys); return NULL; }
-    PyObject *item;
-    while ((item = PyIter_Next(iter))) {
-        if (PyList_Append(keys, item) < 0) {
-            Py_DECREF(iter); Py_DECREF(keys); Py_DECREF(item);
-            return NULL;
-        }
-        Py_DECREF(item);
+    if (_set_node_collect_keys(set->root, keys, 0) < 0) {
+        Py_DECREF(keys);
+        return NULL;
     }
-    Py_DECREF(iter);
     return PyObject_GetIter(keys);
 }
 

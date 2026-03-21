@@ -24,14 +24,14 @@ static inline int hamt_bitmap_index(uint32_t bitmap, uint32_t bit) {
     return popcount32(bitmap & (bit - 1));
 }
 
-/* ---- Node type objects (non-GC) ----------------------------------------- */
+/* ---- Node type objects (non‑GC) ----------------------------------------- */
 
 PyTypeObject _SetNode_Type = {
     PyVarObject_HEAD_INIT(NULL, 0)
     .tp_name = "_SetNode",
     .tp_basicsize = sizeof(SetNode),
     .tp_dealloc = (destructor)_set_node_dealloc,
-    .tp_flags = Py_TPFLAGS_DEFAULT,   /* no GC */
+    .tp_flags = Py_TPFLAGS_DEFAULT,
 };
 
 PyTypeObject _SetBitmapNode_Type = {
@@ -58,7 +58,7 @@ PyTypeObject _SetCollisionNode_Type = {
     .tp_flags = Py_TPFLAGS_DEFAULT,
 };
 
-/* ---- Node creation (non-GC) --------------------------------------------- */
+/* ---- Node creation (non‑GC) --------------------------------------------- */
 
 static SetNode* _set_node_new_bitmap(uint32_t bitmap, PyObject *array) {
     SetBitmapNode *node = PyObject_New(SetBitmapNode, &_SetBitmapNode_Type);
@@ -162,8 +162,54 @@ int _set_node_find(SetNode *node, uint32_t hash, PyObject *key, int shift) {
     }
 }
 
+/* ---- Key collector for iteration ---------------------------------------- */
+
+int _set_node_collect_keys(SetNode *node, PyObject *list, int shift) {
+    if (!node) return 0;
+    switch (node->type) {
+        case SET_NODE_BITMAP: {
+            SetBitmapNode *bn = (SetBitmapNode*)node;
+            Py_ssize_t len = PyTuple_GET_SIZE(bn->array);
+            for (Py_ssize_t i = 0; i < len; i++) {
+                PyObject *item = PyTuple_GET_ITEM(bn->array, i);
+                if (Py_TYPE(item) == &_SetNode_Type) {
+                    if (_set_node_collect_keys((SetNode*)item, list, shift + HAMT_SHIFT) < 0)
+                        return -1;
+                } else {
+                    PyObject *key = PyTuple_GET_ITEM(item, 1);
+                    if (PyList_Append(list, key) < 0)
+                        return -1;
+                }
+            }
+            break;
+        }
+        case SET_NODE_ARRAY: {
+            SetArrayNode *an = (SetArrayNode*)node;
+            for (uint32_t i = 0; i < an->count; i++) {
+                if (an->children[i]) {
+                    if (_set_node_collect_keys(an->children[i], list, shift + HAMT_SHIFT) < 0)
+                        return -1;
+                }
+            }
+            break;
+        }
+        case SET_NODE_COLLISION: {
+            SetCollisionNode *cn = (SetCollisionNode*)node;
+            for (uint32_t i = 0; i < cn->count; i++) {
+                if (PyList_Append(list, cn->keys[i]) < 0)
+                    return -1;
+            }
+            break;
+        }
+        default:
+            break;
+    }
+    return 0;
+}
+
 /* ---- Insertion (assoc) -------------------------------------------------- */
 
+/* (same as before – unchanged) */
 static SetNode* _assoc_into_bitmap(SetBitmapNode *bn, uint32_t hash,
                                    PyObject *key, int *added, int shift) {
     uint32_t frag = hamt_fragment(hash, shift);
@@ -198,7 +244,6 @@ static SetNode* _assoc_into_bitmap(SetBitmapNode *bn, uint32_t hash,
             new_node->size = bn->base.size + (*added);
             return new_node;
         } else {
-            /* leaf */
             PyObject *key_item = PyTuple_GET_ITEM(child, 1);
             if (PyObject_RichCompareBool(key, key_item, Py_EQ) == 1) {
                 *added = 0;
@@ -207,7 +252,6 @@ static SetNode* _assoc_into_bitmap(SetBitmapNode *bn, uint32_t hash,
             }
             uint32_t existing_hash = (uint32_t)PyLong_AsUnsignedLong(PyTuple_GET_ITEM(child, 0));
             if (existing_hash == hash) {
-                /* collision node */
                 PyObject **keys = PyMem_Malloc(2 * sizeof(PyObject*));
                 if (!keys) return NULL;
                 keys[0] = key_item;
@@ -234,12 +278,13 @@ static SetNode* _assoc_into_bitmap(SetBitmapNode *bn, uint32_t hash,
                 new_node->size = bn->base.size + 1;
                 return new_node;
             } else {
-                /* different hash, same fragment */
                 int added_inner = 0;
                 SetNode *new_child = _set_node_assoc(NULL, existing_hash, key_item, &added_inner, shift + HAMT_SHIFT);
                 if (!new_child) return NULL;
-                new_child = _set_node_assoc(new_child, hash, key, &added_inner, shift + HAMT_SHIFT);
-                if (!new_child) return NULL;
+                SetNode *new_child2 = _set_node_assoc(new_child, hash, key, &added_inner, shift + HAMT_SHIFT);
+                Py_DECREF(new_child);
+                if (!new_child2) return NULL;
+                new_child = new_child2;
                 new_array = PyTuple_New(old_len);
                 if (!new_array) { Py_DECREF(new_child); return NULL; }
                 for (Py_ssize_t i = 0; i < old_len; i++) {
@@ -259,7 +304,6 @@ static SetNode* _assoc_into_bitmap(SetBitmapNode *bn, uint32_t hash,
             }
         }
     } else {
-        /* new entry */
         new_array = PyTuple_New(old_len + 1);
         if (!new_array) return NULL;
         int inserted = 0;
