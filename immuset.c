@@ -120,9 +120,6 @@ static Py_hash_t immuset_hash(ImmuSet *self) {
     return self->hash;
 }
 
-#include "immuset.h"
-
-
 static PyObject* immuset_iter(PyObject *self) {
     ImmuSet *set = (ImmuSet*)self;
     PyObject *keys = PyList_New(0);
@@ -132,26 +129,6 @@ static PyObject* immuset_iter(PyObject *self) {
         return NULL;
     }
     return PyObject_GetIter(keys);
-}
-
-static PyObject* immuset_reduce(ImmuSet *self, PyObject *Py_UNUSED(ignored)) {
-    /* Build a tuple of all keys */
-    PyObject *keys = PyList_New(0);
-    if (!keys) return NULL;
-    if (_set_node_collect_keys(self->root, keys, 0) < 0) {
-        Py_DECREF(keys);
-        return NULL;
-    }
-    PyObject *keys_tuple = PyList_AsTuple(keys);
-    Py_DECREF(keys);
-    if (!keys_tuple) return NULL;
-    /* Return (ImmuSet, (keys_tuple,)) */
-    PyObject *args = PyTuple_Pack(1, keys_tuple);
-    Py_DECREF(keys_tuple);
-    if (!args) return NULL;
-    PyObject *result = Py_BuildValue("(OO)", &ImmuSet_Type, args);
-    Py_DECREF(args);
-    return result;
 }
 
 static PyObject* immuset_repr(ImmuSet *self) {
@@ -212,6 +189,88 @@ static PyObject* immuset_richcompare(PyObject *self, PyObject *other, int op) {
     }
 }
 
+/* Set operations */
+static PyObject* immuset_union(ImmuSet *self, PyObject *other) {
+    if (!PyObject_TypeCheck(other, &ImmuSet_Type)) {
+        PyErr_SetString(PyExc_TypeError, "can only union with ImmuSet");
+        return NULL;
+    }
+    ImmuSet *other_set = (ImmuSet*)other;
+    SetNode *new_root = _set_node_union(self->root, other_set->root, 0);
+    if (!new_root) {
+        PyObject *empty = immuset_new(&ImmuSet_Type, NULL, NULL);
+        return empty ? empty : NULL;
+    }
+    ImmuSet *newset = (ImmuSet*)immuset_new(&ImmuSet_Type, NULL, NULL);
+    if (!newset) {
+        _set_node_dealloc(new_root);
+        return NULL;
+    }
+    newset->root = new_root;
+    newset->len = new_root->size;
+    return (PyObject*)newset;
+}
+
+static PyObject* immuset_intersection(ImmuSet *self, PyObject *other) {
+    if (!PyObject_TypeCheck(other, &ImmuSet_Type)) {
+        PyErr_SetString(PyExc_TypeError, "can only intersect with ImmuSet");
+        return NULL;
+    }
+    ImmuSet *other_set = (ImmuSet*)other;
+    SetNode *new_root = _set_node_intersection(self->root, other_set->root, 0);
+    if (!new_root) {
+        PyObject *empty = immuset_new(&ImmuSet_Type, NULL, NULL);
+        return empty ? empty : NULL;
+    }
+    ImmuSet *newset = (ImmuSet*)immuset_new(&ImmuSet_Type, NULL, NULL);
+    if (!newset) {
+        _set_node_dealloc(new_root);
+        return NULL;
+    }
+    newset->root = new_root;
+    newset->len = new_root->size;
+    return (PyObject*)newset;
+}
+
+static PyObject* immuset_difference(ImmuSet *self, PyObject *other) {
+    if (!PyObject_TypeCheck(other, &ImmuSet_Type)) {
+        PyErr_SetString(PyExc_TypeError, "can only difference with ImmuSet");
+        return NULL;
+    }
+    ImmuSet *other_set = (ImmuSet*)other;
+    SetNode *new_root = _set_node_difference(self->root, other_set->root, 0);
+    if (!new_root) {
+        PyObject *empty = immuset_new(&ImmuSet_Type, NULL, NULL);
+        return empty ? empty : NULL;
+    }
+    ImmuSet *newset = (ImmuSet*)immuset_new(&ImmuSet_Type, NULL, NULL);
+    if (!newset) {
+        _set_node_dealloc(new_root);
+        return NULL;
+    }
+    newset->root = new_root;
+    newset->len = new_root->size;
+    return (PyObject*)newset;
+}
+
+static PyObject* immuset_reduce(ImmuSet *self, PyObject *Py_UNUSED(ignored)) {
+    PyObject *keys = PyList_New(0);
+    if (!keys) return NULL;
+    if (_set_node_collect_keys(self->root, keys, 0) < 0) {
+        Py_DECREF(keys);
+        return NULL;
+    }
+    PyObject *keys_tuple = PyList_AsTuple(keys);
+    Py_DECREF(keys);
+    if (!keys_tuple) return NULL;
+    PyObject *args = PyTuple_Pack(1, keys_tuple);
+    Py_DECREF(keys_tuple);
+    if (!args) return NULL;
+    PyObject *result = Py_BuildValue("(OO)", &ImmuSet_Type, args);
+    Py_DECREF(args);
+    return result;
+}
+
 /* GC support for ImmuSet */
 static int immuset_traverse(ImmuSet *self, visitproc visit, void *arg) {
     Py_VISIT(self->root);
@@ -229,6 +288,9 @@ static PyObject* immuset_mutate(ImmuSet *self, PyObject *args);
 static PyMethodDef immuset_methods[] = {
     {"add", (PyCFunction)immuset_add, METH_O, "Add element, return new set"},
     {"discard", (PyCFunction)immuset_discard, METH_O, "Remove element if present, return new set"},
+    {"union", (PyCFunction)immuset_union, METH_O, "Return union with another set"},
+    {"intersection", (PyCFunction)immuset_intersection, METH_O, "Return intersection with another set"},
+    {"difference", (PyCFunction)immuset_difference, METH_O, "Return difference with another set"},
     {"__len__", (PyCFunction)immuset_len_method, METH_NOARGS, "Return number of elements"},
     {"__contains__", (PyCFunction)immuset_contains_method, METH_O, "Check membership"},
     {"__reduce__", (PyCFunction)immuset_reduce, METH_NOARGS, "Support pickling"},
@@ -388,7 +450,7 @@ PyMODINIT_FUNC PyInit_immuset(void) {
     PyObject *mod = PyModule_Create(&immuset_module);
     if (!mod) return NULL;
 
-    /* Initialize internal node types */
+    /* Initialize internal node types (from hamt_set.c) */
     if (_hamt_set_init_types() < 0)
         return NULL;
 
@@ -406,3 +468,4 @@ PyMODINIT_FUNC PyInit_immuset(void) {
 
     return mod;
 }
+

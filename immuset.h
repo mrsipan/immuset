@@ -74,6 +74,11 @@ SetNode* _set_node_assoc(SetNode *node, uint32_t hash, PyObject *key,
                          int *added, int shift);
 SetNode* _set_node_without(SetNode *node, uint32_t hash, PyObject *key,
                            int *removed, int shift);
+/* Set operations */
+SetNode* _set_node_union(SetNode *a, SetNode *b, int shift);
+SetNode* _set_node_intersection(SetNode *a, SetNode *b, int shift);
+SetNode* _set_node_difference(SetNode *a, SetNode *b, int shift);
+
 int _set_node_find(SetNode *node, uint32_t hash, PyObject *key, int shift);
 void _set_node_dealloc(SetNode *node);
 int _hamt_set_init_types(void);
